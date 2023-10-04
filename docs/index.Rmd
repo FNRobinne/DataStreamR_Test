@@ -41,7 +41,8 @@ library(htmltools)
 ```
 ## Load data
 Here I'm using data from DFO's CoSMO programme because data come from loggers, meaning that those are continuous (i.e., hourly) and a greater interest for stream temperature monitoring as it relates to salmon conservation.
-Data must be extracted using a connection to the API. The function parameters are a little bit tricky to get properly because the list of available values, meaning it's easy to make mistakes (e.g., a simple typo). At the same time, there are many parameters and values available to refine data extraction, which mean we can refine the code to make calls to the main dataset as easy and quick to process as possible.
+
+Data must be extracted using a connection to the API. The function parameters are a little bit tricky to get properly because the list of available values is long and diverse, meaning it's easy to make mistakes (e.g., a simple typo). At the same time, there are many parameters and values available to refine data extraction, which mean we can refine the code to make calls to the main dataset as easy and quick to process as possible.
 
 ```{r, echo=F}
 # Hidden key
