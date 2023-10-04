@@ -1,0 +1,126 @@
+---
+title: "Datastream package DatastreamR: a quick test"
+author: "François-Nicolas Robinne"
+date: 2023-10-04
+output:
+  html_document:
+    number_sections: true
+    theme: yeti
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+DatastreamR (<https://github.com/datastreamapp/datastreamr>) is an R
+package providing wrapper functions for the DataStream API. It makes accessing DataStream datasets much easier to access.
+
+This page shows a couple tests that I ran to access and display DataStream data using DatastreamR.
+Note that no QAQC was done and items displayed underneath went through some minor processing.
+
+**Note:** *There is still the need for an API token, and I think we
+should have a SWP one.* *The code below runs with my token (hidden)*
+
+```{r, echo=F}
+# API token: QsR5jdg7y7RKJBuNPmlKZAP1afBeoI3x
+```
+# Create a map of sampling locations
+## Load libraries
+Data extracted from the DataStream database needs some processing to be displayed, and thus
+need some specific libraries for spatial data and time series data handling.
+```{r, message=F, warning=F}         
+library(datastreamr)
+library(sf)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(zoo) # Time series
+library(xts) # Time series
+library(TSstudio) # Time series
+library(leaflet)
+library(htmltools)
+```
+## Load data
+Here I'm using data from DFO's CoSMO programme because data come from loggers, meaning that those are continuous (i.e., hourly) and a greater interest for stream temperature monitoring as it relates to salmon conservation.
+Data must be extracted using a connection to the API. The function parameters are a little bit tricky to get properly because the list of available values, meaning it's easy to make mistakes (e.g., a simple typo). At the same time, there are many parameters and values available to refine data extraction, which mean we can refine the code to make calls to the main dataset as easy and quick to process as possible.
+
+```{r, echo=F}
+# Hidden key
+key <- "QsR5jdg7y7RKJBuNPmlKZAP1afBeoI3x"
+```
+```{r}         
+# Pull sampling locations from DFO CoSMO programme
+Tw_Cosmo <- ds_locations(api_token = key,
+                         filter = c("DOI = '10.25976/0gvo-9d12'",
+                                    "MonitoringLocationType = 'River/Stream",
+                                    "CharacteristicName = 'Temperature, water"),
+                         select = c("Name", "Id", "NameId",
+                                    "Latitude", "Longitude",
+                                    "MonitoringLocationType"))
+
+# Spatialize location information
+Tw_Cosmo_sf <- st_as_sf(Tw_Cosmo, coords = c("Longitude", "Latitude"))
+Tw_Cosmo_sf <- st_set_crs(Tw_Cosmo_sf, 4326) # WGS84 Coord. system 
+```
+
+## Create a leaflet map
+This map is dynamic: you can zoom in and out, and a lable will appear when you hover over a location.
+```{r, out.width='100%'}
+# Create map with labels and location clusters
+labels <- paste(Tw_Cosmo$Name,
+                "<br>Type:", Tw_Cosmo$MonitoringLocationType) %>%
+    lapply(htmltools::HTML) 
+Cosmo_locations_map <- leaflet(Tw_Cosmo_sf) %>% 
+    addTiles() %>% 
+    addCircleMarkers(clusterOptions = markerClusterOptions(), label = ~labels)
+Cosmo_locations_map # Calls leaflet map
+```
+# Visualizing stream temperature time series
+I extracted stream temperature data for one location in the CoSMO dataset: Terminal Creek, near the river mouth (DataStream Location ID: 479895)
+
+## Find location identifier and extract data
+```{r}
+# Extract sampling location for Terminal Creek
+Tw_Cosmo_TermCreek <- Tw_Cosmo_sf %>%
+  filter(grepl('Terminal Creek, near the river mouth', Name))
+```
+The location ID for the sampling location Terminal Creeek near the river mouth is `r Tw_Cosmo_TermCreek$Id`.
+```{r}
+# Pull observations for this location
+Tw_Cosmo_obs <- ds_observations(api_token = key,
+                        filter = c("DOI='10.25976/0gvo-9d12'",
+                                   "LocationId = 479895",
+                                   "CharacteristicName = 'Temperature, water"),
+                        select = c('Id', 'LocationId',
+                                   'CharacteristicName',
+                                   'ActivityStartDate',
+                                   'ActivityStartTime',
+                                   'ResultValue')) 
+```
+## Date-times conversion for time series visualization
+
+```{r, message=F, warning=F}
+# Concatenate date and time for hourly data
+Tw_Cosmo_obs_Ts <- Tw_Cosmo_obs %>% 
+  unite("Date_Times", ActivityStartDate: ActivityStartTime, sep = " ") %>%
+  select('Date_Times', ResultValue)
+Tw_Cosmo_obs_Ts$Date_Times <- ymd_hms(Tw_Cosmo_obs_Ts$Date_Times)
+Tw_Cosmo_obs_Xts <- xts(read.zoo(Tw_Cosmo_obs_Ts))
+
+# Create daily stream temperature average
+Tw_Cosmo_obs_Ts_Daily <- Tw_Cosmo_obs_Ts %>% 
+  group_by(year = year(Date_Times), month = month(Date_Times), day = day(Date_Times)) %>%
+  summarize(avg_day_Tw = mean(ResultValue)) %>% unite("Dates_Days", year:day, sep = "-")
+Tw_Cosmo_obs_Ts_Daily$Dates_Days <- ymd(Tw_Cosmo_obs_Ts_Daily$Dates_Days)
+Tw_Cosmo_obs_Xts_Daily <- xts(read.zoo(Tw_Cosmo_obs_Ts_Daily))
+```
+***
+Now we can visualize our time series. Using TSStudio, graphs are dynamic: graph 1 has slider at the bottom so the user can zoom into the time series, while graph 2 allows the user to add or remove years by clicking on the legend.
+
+It is easy to spot significant data gaps (straigt lines) in 2019, 2020, and 2021.
+
+```{r, out.width='100%', message=F, warning=F}
+# Time series plots
+ts_plot(Tw_Cosmo_obs_Xts, title = "Graph 1: Logger at Terminal Creek, near the
+river mouth", Ytitle = "Stream Temperature (°)", slider = T)
+ts_seasonal(Tw_Cosmo_obs_Xts_Daily, type = "normal", title = "Graph 2: Daily mean water temperature at Terminal Creek, per year")
+```
